@@ -1,0 +1,6 @@
+flask
+flask-socketio
+firebase-admin
+gunicorn
+requests
+eventlet

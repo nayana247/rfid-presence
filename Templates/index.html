@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RFID Presence System</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+  :root {
+    --bg: #070a0f;
+    --surface: #0d1117;
+    --surface2: #161b22;
+    --border: #21262d;
+    --green: #39d353;
+    --red: #f85149;
+    --blue: #58a6ff;
+    --yellow: #e3b341;
+    --text: #e6edf3;
+    --muted: #7d8590;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Syne', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(57,211,83,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(57,211,83,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  header {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 40px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(7,10,15,0.95);
+    backdrop-filter: blur(10px);
+  }
+
+  .logo { display: flex; align-items: center; gap: 12px; }
+
+  .logo-icon {
+    width: 36px; height: 36px;
+    border: 2px solid var(--green);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    animation: pulse-border 2s infinite;
+  }
+
+  @keyframes pulse-border {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(57,211,83,0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(57,211,83,0); }
+  }
+
+  .logo h1 { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; }
+  .logo span { color: var(--green); }
+
+  .status-badge {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 14px; border-radius: 20px;
+    border: 1px solid var(--border);
+    font-family: 'Space Mono', monospace; font-size: 12px; color: var(--muted);
+  }
+
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--green); animation: blink 1.5s infinite;
+  }
+
+  .status-dot.offline { background: var(--red); animation: none; }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  main {
+    position: relative; z-index: 1;
+    padding: 30px 40px; max-width: 1400px; margin: 0 auto;
+  }
+
+  /* ── Presence Card ── */
+  .presence-section { margin-bottom: 30px; }
+
+  .presence-card {
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    padding: 30px;
+    display: flex;
+    align-items: center;
+    gap: 30px;
+    transition: all 0.4s;
+    background: var(--surface);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .presence-card.connected {
+    border-color: var(--green);
+    background: linear-gradient(135deg, rgba(57,211,83,0.08) 0%, var(--surface) 60%);
+  }
+
+  .presence-card.connected::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 20% 50%, rgba(57,211,83,0.06) 0%, transparent 60%);
+    pointer-events: none;
+  }
+
+  .presence-card.idle {
+    border-color: var(--border);
+    background: var(--surface);
+  }
+
+  .presence-icon {
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px;
+    flex-shrink: 0;
+    transition: all 0.4s;
+  }
+
+  .presence-icon.connected {
+    background: rgba(57,211,83,0.15);
+    border: 2px solid var(--green);
+    animation: glow-pulse 2s infinite;
+  }
+
+  .presence-icon.idle {
+    background: var(--surface2);
+    border: 2px solid var(--border);
+  }
+
+  @keyframes glow-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(57,211,83,0.4); }
+    50% { box-shadow: 0 0 20px 4px rgba(57,211,83,0.2); }
+  }
+
+  .presence-info { flex: 1; }
+
+  .presence-label {
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 2px; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 6px;
+  }
+
+  .presence-name {
+    font-size: 28px; font-weight: 800;
+    letter-spacing: -0.5px; margin-bottom: 6px;
+    transition: all 0.3s;
+  }
+
+  .presence-name.connected { color: var(--green); }
+  .presence-name.idle { color: var(--muted); }
+
+  .presence-uid {
+    font-family: 'Space Mono', monospace;
+    font-size: 12px; color: var(--muted);
+  }
+
+  .presence-timer {
+    text-align: right; flex-shrink: 0;
+  }
+
+  .timer-value {
+    font-family: 'Space Mono', monospace;
+    font-size: 42px; font-weight: 700;
+    color: var(--green); line-height: 1;
+    transition: all 0.3s;
+  }
+
+  .timer-value.idle { color: var(--muted); font-size: 28px; }
+
+  .timer-label {
+    font-size: 11px; color: var(--muted);
+    text-align: right; margin-top: 4px;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+
+  .connected-since {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px; color: var(--muted); margin-top: 8px;
+  }
+
+  /* ── Tabs ── */
+  .tabs {
+    display: flex; gap: 4px; margin-bottom: 30px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tab {
+    padding: 10px 20px; border: none; background: none;
+    color: var(--muted); font-family: 'Syne', sans-serif;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: all 0.2s;
+  }
+
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--green); border-bottom-color: var(--green); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* ── Stats ── */
+  .stats-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 16px; margin-bottom: 30px;
+  }
+
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; position: relative;
+    overflow: hidden; transition: border-color 0.2s;
+  }
+
+  .stat-card:hover { border-color: var(--green); }
+
+  .stat-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  }
+
+  .stat-card.s1::before { background: var(--green); }
+  .stat-card.s2::before { background: var(--blue); }
+  .stat-card.s3::before { background: var(--yellow); }
+
+  .stat-label {
+    font-size: 12px; font-weight: 600; color: var(--muted);
+    letter-spacing: 1px; text-transform: uppercase; margin-bottom: 12px;
+  }
+
+  .stat-value {
+    font-family: 'Space Mono', monospace;
+    font-size: 42px; font-weight: 700; line-height: 1;
+  }
+
+  .stat-card.s1 .stat-value { color: var(--green); }
+  .stat-card.s2 .stat-value { color: var(--blue); }
+  .stat-card.s3 .stat-value { color: var(--yellow); }
+
+  /* ── Section header ── */
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .section-title {
+    font-size: 16px; font-weight: 700;
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  .live-dot {
+    width: 8px; height: 8px;
+    background: var(--green); border-radius: 50%;
+    animation: blink 1s infinite;
+  }
+
+  /* ── Buttons ── */
+  .btn {
+    padding: 8px 16px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface2);
+    color: var(--text); font-family: 'Syne', sans-serif;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px;
+    text-decoration: none;
+  }
+
+  .btn:hover { border-color: var(--green); color: var(--green); }
+  .btn.danger:hover { border-color: var(--red); color: var(--red); }
+  .btn.primary { background: var(--green); color: #000; border-color: var(--green); }
+  .btn.primary:hover { background: #2ab844; }
+  .btn-group { display: flex; gap: 8px; }
+
+  /* ── Table ── */
+  .log-container {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden;
+  }
+
+  .log-table { width: 100%; border-collapse: collapse; }
+
+  .log-table th {
+    padding: 12px 16px; text-align: left;
+    font-size: 11px; font-weight: 700; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+    font-family: 'Space Mono', monospace;
+  }
+
+  .log-table td {
+    padding: 12px 16px; font-size: 13px;
+    border-bottom: 1px solid rgba(33,38,45,0.5);
+    font-family: 'Space Mono', monospace;
+  }
+
+  .log-table tr:last-child td { border-bottom: none; }
+  .log-table tbody tr { transition: background 0.15s; }
+  .log-table tbody tr:hover { background: var(--surface2); }
+
+  .log-table tbody tr.new-row {
+    animation: slideIn 0.4s ease;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(-10px); background: rgba(57,211,83,0.08); }
+    to { opacity: 1; transform: translateY(0); background: transparent; }
+  }
+
+  .duration-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 700;
+    background: rgba(88,166,255,0.1);
+    color: var(--blue); border: 1px solid rgba(88,166,255,0.2);
+  }
+
+  /* ── Filter bar ── */
+  .filter-bar {
+    display: flex; gap: 10px; margin-bottom: 16px; align-items: center;
+  }
+
+  .filter-bar input, .filter-bar select {
+    padding: 8px 14px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text);
+    font-family: 'Space Mono', monospace; font-size: 13px;
+    outline: none; transition: border-color 0.2s;
+  }
+
+  .filter-bar input:focus,
+  .filter-bar select:focus { border-color: var(--green); }
+
+  .filter-bar select option { background: var(--surface2); }
+
+  /* ── Cards management ── */
+  .cards-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px; margin-top: 20px;
+  }
+
+  .card-item {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; transition: all 0.2s;
+  }
+
+  .card-item:hover { border-color: var(--blue); }
+
+  .card-item-header {
+    display: flex; justify-content: space-between;
+    align-items: flex-start; margin-bottom: 12px;
+  }
+
+  .card-name-display { font-size: 16px; font-weight: 700; }
+
+  .card-uid-display {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px; color: var(--muted); margin-top: 4px;
+  }
+
+  .card-meta {
+    font-size: 12px; color: var(--muted);
+    margin-top: 8px; font-family: 'Space Mono', monospace;
+  }
+
+  .card-actions { display: flex; gap: 8px; margin-top: 16px; }
+
+  /* Edit inline */
+  .edit-input {
+    width: 100%; padding: 8px 12px;
+    background: var(--surface2); border: 1px solid var(--green);
+    border-radius: 6px; color: var(--text);
+    font-family: 'Syne', sans-serif; font-size: 14px;
+    font-weight: 700; outline: none; margin-bottom: 10px;
+  }
+
+  /* Add card form */
+  .add-card-form {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; margin-bottom: 24px;
+  }
+
+  .form-title {
+    font-size: 14px; font-weight: 700; margin-bottom: 16px;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 1px;
+  }
+
+  .form-row {
+    display: grid; grid-template-columns: 1fr 1fr auto;
+    gap: 12px; align-items: end;
+  }
+
+  .form-group label {
+    display: block; font-size: 12px; font-weight: 600;
+    color: var(--muted); margin-bottom: 6px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+
+  .form-group input {
+    width: 100%; padding: 10px 14px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text);
+    font-family: 'Space Mono', monospace; font-size: 13px;
+    outline: none; transition: border-color 0.2s;
+  }
+
+  .form-group input:focus { border-color: var(--green); }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: 30px; right: 30px;
+    padding: 14px 20px; border-radius: 10px;
+    font-size: 14px; font-weight: 600; z-index: 1000;
+    transform: translateY(100px); opacity: 0;
+    transition: all 0.3s; display: flex; align-items: center; gap: 10px;
+    min-width: 260px;
+  }
+
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast.connected { background: rgba(26,74,46,0.95); border: 1px solid var(--green); color: var(--green); }
+  .toast.disconnected { background: rgba(74,26,26,0.95); border: 1px solid var(--red); color: var(--red); }
+  .toast.info { background: var(--surface2); border: 1px solid var(--blue); color: var(--blue); }
+
+  .empty-state {
+    text-align: center; padding: 60px 20px; color: var(--muted);
+  }
+
+  .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
+  .empty-state p { font-size: 14px; }
+
+  @media (max-width: 768px) {
+    main { padding: 20px; }
+    header { padding: 16px 20px; }
+    .stats-grid { grid-template-columns: 1fr; }
+    .form-row { grid-template-columns: 1fr; }
+    .presence-card { flex-direction: column; text-align: center; }
+    .presence-timer { text-align: center; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">⬡</div>
+    <h1>RFID <span>PRESENCE</span></h1>
+  </div>
+  <div class="status-badge">
+    <span style="margin-right:6px;color:var(--muted);font-size:11px;letter-spacing:1px;text-transform:uppercase">Software Status</span>
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">CONNECTING...</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- Live Presence Card -->
+  <div class="presence-section">
+    <div class="presence-card idle" id="presenceCard">
+      <div class="presence-icon idle" id="presenceIcon">📡</div>
+      <div class="presence-info">
+        <div class="presence-label">Current Status</div>
+        <div class="presence-name idle" id="presenceName">No Card Detected</div>
+        <div class="presence-uid" id="presenceUID">—</div>
+        <div class="connected-since" id="connectedSince"></div>
+      </div>
+      <div class="presence-timer">
+        <div class="timer-value idle" id="timerValue">—</div>
+        <div class="timer-label" id="timerLabel">Duration</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('dashboard')">📊 Dashboard</button>
+    <button class="tab" onclick="switchTab('logs')">📋 Session Logs</button>
+    <button class="tab" onclick="switchTab('cards')">💳 Manage Cards</button>
+  </div>
+
+  <!-- DASHBOARD TAB -->
+  <div class="tab-content active" id="tab-dashboard">
+    <div class="stats-grid">
+      <div class="stat-card s1">
+        <div class="stat-label">Arduino Status</div>
+        <div class="stat-value" id="statArduino" style="font-size:22px;margin-top:4px">—</div>
+        <div style="font-family:Space Mono,monospace;font-size:11px;color:var(--muted);margin-top:8px" id="statCOM">COM9 · 9600 baud</div>
+        <div style="font-family:Space Mono,monospace;font-size:11px;color:var(--muted);margin-top:4px">Last signal: <span id="statLastSignal">—</span></div>
+      </div>
+      <div class="stat-card s2">
+        <div class="stat-label">Sessions Today</div>
+        <div class="stat-value" id="statToday">0</div>
+      </div>
+      <div class="stat-card s3">
+        <div class="stat-label">Avg Duration</div>
+        <div class="stat-value" id="statAvg">0s</div>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <div class="section-title">
+        <div class="live-dot"></div>
+        Live Session Feed
+      </div>
+    </div>
+
+    <div class="log-container">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>Card Name</th>
+            <th>UID</th>
+            <th>Connected At</th>
+            <th>Disconnected At</th>
+            <th>Duration</th>
+          </tr>
+        </thead>
+        <tbody id="liveFeed">
+          <tr>
+            <td colspan="5">
+              <div class="empty-state">
+                <div class="icon">📡</div>
+                <p>Waiting for card sessions...</p>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- LOGS TAB -->
+  <div class="tab-content" id="tab-logs">
+    <div class="filter-bar">
+      <input type="text" id="filterName" placeholder="🔍 Filter by card name..." oninput="filterLogs()">
+      <div class="btn-group" style="margin-left:auto">
+        <a href="/api/sessions/export" class="btn">⬇ Export CSV</a>
+        <button class="btn danger" onclick="clearSessions()">🗑 Clear</button>
+      </div>
+    </div>
+
+    <div class="log-container">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Date</th>
+            <th>Card Name</th>
+            <th>UID</th>
+            <th>Connected At</th>
+            <th>Disconnected At</th>
+            <th>Duration</th>
+          </tr>
+        </thead>
+        <tbody id="logsTable">
+          <tr><td colspan="7"><div class="empty-state"><p>Loading...</p></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- CARDS TAB -->
+  <div class="tab-content" id="tab-cards">
+    <div class="add-card-form">
+      <div class="form-title">➕ Register New Card</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Card UID</label>
+          <input type="text" id="newUID" placeholder="e.g. 3E 66 10 7">
+        </div>
+        <div class="form-group">
+          <label>Card Name</label>
+          <input type="text" id="newName" placeholder="e.g. John's Card">
+        </div>
+        <button class="btn primary" onclick="addCard()">Register</button>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <div class="section-title">Registered Cards</div>
+    </div>
+
+    <div class="cards-grid" id="cardsGrid">
+      <p style="color:var(--muted)">Loading...</p>
+    </div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const socket = io();
+  let timerInterval = null;
+  let sessionStart = null;
+  let liveCount = 0;
+  let allLogs = [];
+
+  // ── Socket ──────────────────────────────────────────────
+  socket.on('connect', () => {
+    document.getElementById('statusDot').classList.remove('offline');
+    document.getElementById('statusText').textContent = 'LIVE';
+    loadStats();
+    loadArduinoStatus();
+    loadSessions();
+    loadCards();
+    checkCurrent();
+    setInterval(loadArduinoStatus, 3000);
+  });
+
+  socket.on('disconnect', () => {
+    document.getElementById('statusDot').classList.add('offline');
+    document.getElementById('statusText').textContent = 'DISCONNECTED';
+  });
+
+  socket.on('arduino_status', (data) => {
+    updateArduinoStat(data.connected);
+  });
+
+  socket.on('card_connected', (data) => {
+    setPresenceConnected(data);
+    showToast('connected', `📶 ${data.card_name} Connected`);
+    playBeep('connected');
+    loadStats();
+  });
+
+  socket.on('card_disconnected', (data) => {
+    setPresenceIdle();
+    appendLiveFeed(data);
+    showToast('disconnected', `📴 ${data.card_name} Disconnected — ${formatDuration(data.duration_seconds)}`);
+    playBeep('disconnected');
+    loadStats();
+    if (document.getElementById('tab-logs').classList.contains('active')) loadSessions();
+  });
+
+  // ── Presence Card ───────────────────────────────────────
+  async function checkCurrent() {
+    const res = await fetch('/api/current');
+    const data = await res.json();
+    if (data.active) {
+      setPresenceConnected(data, data.elapsed_seconds);
+    }
+  }
+
+  function setPresenceConnected(data, initialSeconds = 0) {
+    const card = document.getElementById('presenceCard');
+    const icon = document.getElementById('presenceIcon');
+    const name = document.getElementById('presenceName');
+    const uid = document.getElementById('presenceUID');
+    const since = document.getElementById('connectedSince');
+    const timer = document.getElementById('timerValue');
+    const label = document.getElementById('timerLabel');
+
+    card.className = 'presence-card connected';
+    icon.className = 'presence-icon connected';
+    icon.textContent = '💳';
+    name.className = 'presence-name connected';
+    name.textContent = data.card_name;
+    uid.textContent = 'UID: ' + data.uid;
+    since.textContent = 'Connected: ' + data.connected_at;
+    timer.className = 'timer-value';
+    label.textContent = 'Duration';
+
+    
+
+    if (timerInterval) clearInterval(timerInterval);
+    let seconds = initialSeconds;
+    timer.textContent = formatDuration(seconds);
+    timerInterval = setInterval(() => {
+      seconds++;
+      timer.textContent = formatDuration(seconds);
+    }, 1000);
+
+    sessionStart = data.connected_at;
+  }
+
+  function setPresenceIdle() {
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+
+    document.getElementById('presenceCard').className = 'presence-card idle';
+    document.getElementById('presenceIcon').className = 'presence-icon idle';
+    document.getElementById('presenceIcon').textContent = '📡';
+    document.getElementById('presenceName').className = 'presence-name idle';
+    document.getElementById('presenceName').textContent = 'No Card Detected';
+    document.getElementById('presenceUID').textContent = '—';
+    document.getElementById('connectedSince').textContent = '';
+    document.getElementById('timerValue').className = 'timer-value idle';
+    document.getElementById('timerValue').textContent = '—';
+    document.getElementById('timerLabel').textContent = 'Duration';
+    
+  }
+
+  // ── Stats ───────────────────────────────────────────────
+  async function loadStats() {
+    const res = await fetch('/api/stats');
+    const data = await res.json();
+    document.getElementById('statToday').textContent = data.total_today;
+    document.getElementById('statAvg').textContent = formatDuration(data.avg_duration);
+  }
+
+  // ── Live Feed ───────────────────────────────────────────
+  function appendLiveFeed(data) {
+    const tbody = document.getElementById('liveFeed');
+    if (liveCount === 0) tbody.innerHTML = '';
+    liveCount++;
+
+    const tr = document.createElement('tr');
+    tr.className = 'new-row';
+    tr.innerHTML = `
+      <td style="font-weight:700">${data.card_name}</td>
+      <td style="color:var(--muted)">${data.uid}</td>
+      <td>${data.connected_at}</td>
+      <td>${data.disconnected_at}</td>
+      <td><span class="duration-badge">⏱ ${formatDuration(data.duration_seconds)}</span></td>
+    `;
+    tbody.insertBefore(tr, tbody.firstChild);
+    while (tbody.children.length > 20) tbody.removeChild(tbody.lastChild);
+  }
+
+  // ── Session Logs ────────────────────────────────────────
+  async function loadSessions() {
+    const res = await fetch('/api/sessions');
+    allLogs = await res.json();
+    renderLogs(allLogs);
+  }
+
+  function renderLogs(logs) {
+    const tbody = document.getElementById('logsTable');
+    if (logs.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><div class="icon">📋</div><p>No sessions yet</p></div></td></tr>`;
+      return;
+    }
+    tbody.innerHTML = logs.map(s => `
+      <tr>
+        <td style="color:var(--muted)">${s.id}</td>
+        <td style="color:var(--muted)">${s.connected_at.split(' ')[0]}</td>
+        <td style="font-weight:700">${s.card_name}</td>
+        <td style="color:var(--muted)">${s.uid}</td>
+        <td>${s.connected_at.split(' ')[1]}</td>
+        <td>${s.disconnected_at ? s.disconnected_at.split(' ')[1] : '—'}</td>
+        <td><span class="duration-badge">⏱ ${formatDuration(s.duration_seconds)}</span></td>
+      </tr>
+    `).join('');
+  }
+
+  function filterLogs() {
+    const q = document.getElementById('filterName').value.toLowerCase();
+    renderLogs(allLogs.filter(l => l.card_name.toLowerCase().includes(q)));
+  }
+
+  async function clearSessions() {
+    if (!confirm('Clear all sessions?')) return;
+    await fetch('/api/sessions/clear', { method: 'DELETE' });
+    allLogs = [];
+    renderLogs([]);
+    loadStats();
+    document.getElementById('liveFeed').innerHTML = `<tr><td colspan="5"><div class="empty-state"><div class="icon">📡</div><p>Waiting for card sessions...</p></div></td></tr>`;
+    liveCount = 0;
+    showInfo('Sessions cleared');
+  }
+
+  // ── Cards ───────────────────────────────────────────────
+  async function loadCards() {
+    const res = await fetch('/api/cards');
+    const cards = await res.json();
+    const grid = document.getElementById('cardsGrid');
+
+    if (cards.length === 0) {
+      grid.innerHTML = `<div class="empty-state"><div class="icon">💳</div><p>No cards registered</p></div>`;
+      return;
+    }
+
+    grid.innerHTML = cards.map(c => `
+      <div class="card-item" id="carditem-${c.uid.replace(/ /g,'_')}">
+        <div class="card-item-header">
+          <div>
+            <div class="card-name-display" id="cname-${c.uid.replace(/ /g,'_')}">${c.name}</div>
+            <div class="card-uid-display">${c.uid}</div>
+          </div>
+          <span class="duration-badge">💳</span>
+        </div>
+        <div class="card-meta">
+          Sessions: ${c.total_sessions || 0} &nbsp;|&nbsp;
+          Last seen: ${c.last_seen ? c.last_seen.split(' ')[0] : 'Never'}
+        </div>
+        <div class="card-actions">
+          <button class="btn" onclick="editCard('${c.uid}', '${c.name}')">✏️ Edit</button>
+          <button class="btn danger" onclick="deleteCard('${c.uid}')">🗑 Delete</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function editCard(uid, currentName) {
+    const key = uid.replace(/ /g,'_');
+    const nameEl = document.getElementById('cname-' + key);
+    const cardItem = document.getElementById('carditem-' + key);
+    const actionsEl = cardItem.querySelector('.card-actions');
+
+    nameEl.innerHTML = `<input class="edit-input" id="editInput-${key}" value="${currentName}" type="text">`;
+    actionsEl.innerHTML = `
+      <button class="btn primary" onclick="saveCard('${uid}')">💾 Save</button>
+      <button class="btn" onclick="loadCards()">✕ Cancel</button>
+    `;
+    document.getElementById('editInput-' + key).focus();
+  }
+
+  async function saveCard(uid) {
+    const key = uid.replace(/ /g,'_');
+    const newName = document.getElementById('editInput-' + key).value.trim();
+    if (!newName) return;
+    await fetch(`/api/cards/${encodeURIComponent(uid)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName })
+    });
+    loadCards();
+    showInfo('Card updated ✓');
+  }
+
+  async function deleteCard(uid) {
+    if (!confirm('Delete this card?')) return;
+    await fetch(`/api/cards/${encodeURIComponent(uid)}`, { method: 'DELETE' });
+    loadCards();
+    showInfo('Card deleted');
+  }
+
+  async function addCard() {
+    const uid = document.getElementById('newUID').value.trim();
+    const name = document.getElementById('newName').value.trim();
+    if (!uid || !name) { showInfo('Fill in both fields'); return; }
+    const res = await fetch('/api/cards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uid, name })
+    });
+    const data = await res.json();
+    if (data.success) {
+      document.getElementById('newUID').value = '';
+      document.getElementById('newName').value = '';
+      loadCards();
+      showInfo('Card registered ✓');
+    } else {
+      showInfo('Card already exists');
+    }
+  }
+
+  // ── Helpers ─────────────────────────────────────────────
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach((t, i) => {
+      t.classList.toggle('active', ['dashboard','logs','cards'][i] === name);
+    });
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+    if (name === 'logs') loadSessions();
+    if (name === 'cards') loadCards();
+  }
+
+  function formatDuration(seconds) {
+    if (!seconds && seconds !== 0) return '—';
+    if (seconds < 60) return seconds + 's';
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    if (m < 60) return `${m}m ${s}s`;
+    const h = Math.floor(m / 60);
+    return `${h}h ${m % 60}m`;
+  }
+
+  function showToast(type, msg) {
+    const toast = document.getElementById('toast');
+    toast.className = `toast ${type} show`;
+    toast.innerHTML = msg;
+    setTimeout(() => toast.classList.remove('show'), 4000);
+  }
+
+  async function loadArduinoStatus() {
+    try {
+      const res = await fetch('/api/arduino-status');
+      const data = await res.json();
+      updateArduinoStat(data.connected, data.last_signal);
+    } catch(e) {}
+  }
+
+  function updateArduinoStat(connected, lastSignal) {
+    const el = document.getElementById('statArduino');
+    const ls = document.getElementById('statLastSignal');
+    if (connected) {
+      el.style.color = 'var(--green)';
+      el.textContent = '🔌 Connected';
+    } else {
+      el.style.color = 'var(--red)';
+      el.textContent = '⚠️ Disconnected';
+    }
+    if (lastSignal && ls) ls.textContent = lastSignal;
+  }
+
+  function showInfo(msg) {
+    showToast('info', `ℹ️ ${msg}`);
+  }
+
+  function playBeep(type) {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = type === 'connected' ? 880 : 330;
+      gain.gain.setValueAtTime(0.08, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      osc.start(); osc.stop(ctx.currentTime + 0.3);
+    } catch(e) {}
+  }
+</script>
+</body>
+</html>

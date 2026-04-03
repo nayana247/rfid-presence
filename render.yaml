@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: rfid-presence
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -k eventlet -w 1 server:app
+    envVars:
+      - key: FIREBASE_KEY
+        sync: false
