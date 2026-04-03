@@ -464,10 +464,18 @@
     <div class="logo-icon">⬡</div>
     <h1>RFID <span>PRESENCE</span></h1>
   </div>
-  <div class="status-badge">
-    <span style="margin-right:6px;color:var(--muted);font-size:11px;letter-spacing:1px;text-transform:uppercase">Software Status</span>
-    <div class="status-dot" id="statusDot"></div>
-    <span id="statusText">CONNECTING...</span>
+  <div style="display:flex;align-items:center;gap:16px">
+    <div class="status-badge">
+      <span style="margin-right:6px;color:var(--muted);font-size:11px;letter-spacing:1px;text-transform:uppercase">Software Status</span>
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">CONNECTING...</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:6px 14px;border-radius:20px;border:1px solid var(--border);font-size:12px">
+      <span style="color:var(--muted)">👤</span>
+      <span id="headerUsername" style="font-family:Space Mono,monospace;color:var(--text)"></span>
+      <span id="headerRole" style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:700"></span>
+      <a href="/logout" style="color:var(--red);font-size:11px;text-decoration:none;font-weight:700;margin-left:4px">LOGOUT</a>
+    </div>
   </div>
 </header>
 
@@ -495,6 +503,8 @@
     <button class="tab active" onclick="switchTab('dashboard')">📊 Dashboard</button>
     <button class="tab" onclick="switchTab('logs')">📋 Session Logs</button>
     <button class="tab" onclick="switchTab('cards')">💳 Manage Cards</button>
+    <button class="tab admin-only" onclick="switchTab('users')">👥 Users</button>
+    <button class="tab" onclick="switchTab('settings')">⚙️ Settings</button>
   </div>
 
   <!-- DASHBOARD TAB -->
@@ -603,6 +613,72 @@
       <p style="color:var(--muted)">Loading...</p>
     </div>
   </div>
+  <!-- USERS TAB (Admin only) -->
+  <div class="tab-content" id="tab-users">
+    <div class="add-card-form">
+      <div class="form-title">➕ Add New User</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:12px;align-items:end">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="newUserName" placeholder="e.g. john">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="newUserPass" placeholder="Min 6 characters">
+        </div>
+        <div class="form-group">
+          <label>Role</label>
+          <select id="newUserRole" style="width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:Space Mono,monospace;font-size:13px;outline:none">
+            <option value="viewer">Viewer</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <button class="btn primary" onclick="addUser()">Add User</button>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <div class="section-title">👥 Registered Users</div>
+    </div>
+
+    <div class="log-container">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Username</th>
+            <th>Role</th>
+            <th>Created</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="usersTable">
+          <tr><td colspan="5"><div class="empty-state"><p>Loading...</p></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- SETTINGS TAB -->
+  <div class="tab-content" id="tab-settings">
+    <div class="add-card-form" style="max-width:500px">
+      <div class="form-title">🔑 Change Password</div>
+      <div class="form-group">
+        <label>Current Password</label>
+        <input type="password" id="currentPw" placeholder="Enter current password">
+      </div>
+      <div class="form-group">
+        <label>New Password</label>
+        <input type="password" id="newPw" placeholder="Min 6 characters">
+      </div>
+      <div class="form-group">
+        <label>Confirm New Password</label>
+        <input type="password" id="confirmPw" placeholder="Repeat new password">
+      </div>
+      <button class="btn primary" onclick="changePassword()">Update Password</button>
+    </div>
+  </div>
+
 </main>
 
 <div class="toast" id="toast"></div>
@@ -618,6 +694,7 @@
   socket.on('connect', () => {
     document.getElementById('statusDot').classList.remove('offline');
     document.getElementById('statusText').textContent = 'LIVE';
+    loadMe();
     loadStats();
     loadArduinoStatus();
     loadSessions();
@@ -928,6 +1005,141 @@
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
       osc.start(); osc.stop(ctx.currentTime + 0.3);
     } catch(e) {}
+  }
+
+  // ── User info ───────────────────────────────────────────
+  let currentRole = 'viewer';
+
+  async function loadMe() {
+    const res = await fetch('/api/me');
+    const data = await res.json();
+    currentRole = data.role;
+    document.getElementById('headerUsername').textContent = data.username;
+    const roleEl = document.getElementById('headerRole');
+    roleEl.textContent = data.role.toUpperCase();
+    roleEl.style.background = data.role === 'admin' ? 'rgba(57,211,83,0.15)' : 'rgba(88,166,255,0.15)';
+    roleEl.style.color = data.role === 'admin' ? 'var(--green)' : 'var(--blue)';
+    // Hide admin-only tabs for viewers
+    if (data.role !== 'admin') {
+      document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
+    }
+  }
+
+  // ── Users ───────────────────────────────────────────────
+  async function loadUsers() {
+    const res = await fetch('/api/users');
+    if (res.status === 403) {
+      document.getElementById('usersTable').innerHTML = '<tr><td colspan="5"><div class="empty-state"><p>Admin access required</p></div></td></tr>';
+      return;
+    }
+    const users = await res.json();
+    const tbody = document.getElementById('usersTable');
+    if (users.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state"><p>No users</p></div></td></tr>';
+      return;
+    }
+    tbody.innerHTML = users.map(u => `
+      <tr>
+        <td style="color:var(--muted)">${u.id}</td>
+        <td style="font-weight:700;font-family:Space Mono,monospace">${u.username}</td>
+        <td>
+          <span style="padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;
+            background:${u.role === 'admin' ? 'rgba(57,211,83,0.15)' : 'rgba(88,166,255,0.15)'};
+            color:${u.role === 'admin' ? 'var(--green)' : 'var(--blue)'};
+            border:1px solid ${u.role === 'admin' ? 'rgba(57,211,83,0.3)' : 'rgba(88,166,255,0.3)'}">
+            ${u.role.toUpperCase()}
+          </span>
+        </td>
+        <td style="color:var(--muted);font-family:Space Mono,monospace">${u.created_at ? u.created_at.split('T')[0] : '—'}</td>
+        <td>
+          <div style="display:flex;gap:8px">
+            <select onchange="changeRole(${u.id}, this.value)" style="padding:4px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;cursor:pointer">
+              <option value="viewer" ${u.role === 'viewer' ? 'selected' : ''}>Viewer</option>
+              <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
+            </select>
+            ${u.username !== 'admin' ? `<button class="btn danger" onclick="deleteUser(${u.id}, '${u.username}')">🗑</button>` : ''}
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  async function addUser() {
+    const username = document.getElementById('newUserName').value.trim();
+    const password = document.getElementById('newUserPass').value;
+    const role = document.getElementById('newUserRole').value;
+    if (!username || !password) { showInfo('Fill in all fields'); return; }
+    const res = await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, role })
+    });
+    const data = await res.json();
+    if (data.success) {
+      document.getElementById('newUserName').value = '';
+      document.getElementById('newUserPass').value = '';
+      loadUsers();
+      showInfo('User added ✓');
+    } else {
+      showInfo(data.error);
+    }
+  }
+
+  async function changeRole(id, role) {
+    await fetch(`/api/users/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role })
+    });
+    loadUsers();
+    showInfo('Role updated ✓');
+  }
+
+  async function deleteUser(id, username) {
+    if (!confirm(`Delete user "${username}"?`)) return;
+    const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) {
+      loadUsers();
+      showInfo('User deleted');
+    } else {
+      showInfo(data.error);
+    }
+  }
+
+  // ── Change Password ─────────────────────────────────────
+  async function changePassword() {
+    const current = document.getElementById('currentPw').value;
+    const newPw = document.getElementById('newPw').value;
+    const confirm = document.getElementById('confirmPw').value;
+    if (!current || !newPw || !confirm) { showInfo('Fill in all fields'); return; }
+    const res = await fetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_password: current, new_password: newPw, confirm_password: confirm })
+    });
+    const data = await res.json();
+    if (data.success) {
+      document.getElementById('currentPw').value = '';
+      document.getElementById('newPw').value = '';
+      document.getElementById('confirmPw').value = '';
+      showInfo('Password updated ✓');
+    } else {
+      showInfo(data.error);
+    }
+  }
+
+  // ── Updated switchTab ───────────────────────────────────
+  function switchTab(name) {
+    const tabNames = ['dashboard', 'logs', 'cards', 'users', 'settings'];
+    document.querySelectorAll('.tab').forEach((t, i) => {
+      t.classList.toggle('active', tabNames[i] === name);
+    });
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+    if (name === 'logs') loadSessions();
+    if (name === 'cards') loadCards();
+    if (name === 'users') loadUsers();
   }
 </script>
 </body>
